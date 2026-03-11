@@ -7,6 +7,11 @@ import { ThemeToggle } from './ThemeToggle';
 import { FEATURES } from '@/lib/constants';
 import { cn } from '@/lib/cn';
 
+const AI_FEATURES = FEATURES.filter(f => f.aiPowered);
+const OFFLINE_FEATURES = FEATURES.filter(f => !f.aiPowered);
+const TOP_NAV = FEATURES.slice(0, 5);
+const MORE_FEATURES = FEATURES.slice(5);
+
 export function Navbar() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -23,7 +28,7 @@ export function Navbar() {
 
           {/* Desktop nav */}
           <div className="hidden lg:flex items-center gap-1">
-            {FEATURES.slice(0, 6).map((f) => (
+            {TOP_NAV.map((f) => (
               <Link
                 key={f.id}
                 href={f.href}
@@ -38,16 +43,39 @@ export function Navbar() {
               </Link>
             ))}
             <div className="relative group">
-              <button aria-haspopup="true" className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <button
+                aria-haspopup="true"
+                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
                 More
               </button>
-              <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible transition-all">
-                {FEATURES.slice(6).map((f) => (
+              <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible transition-all max-h-[70vh] overflow-y-auto">
+                <div className="px-3 py-2 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                  AI-Powered
+                </div>
+                {MORE_FEATURES.filter(f => f.aiPowered).map((f) => (
                   <Link
                     key={f.id}
                     href={f.href}
                     className={cn(
-                      'block px-4 py-2.5 text-sm transition-colors first:rounded-t-lg last:rounded-b-lg',
+                      'block px-4 py-2 text-sm transition-colors',
+                      pathname === f.href
+                        ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    )}
+                  >
+                    {f.icon} {f.name}
+                  </Link>
+                ))}
+                <div className="px-3 py-2 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-t border-gray-100 dark:border-gray-700 mt-1">
+                  Offline Tools
+                </div>
+                {OFFLINE_FEATURES.map((f) => (
+                  <Link
+                    key={f.id}
+                    href={f.href}
+                    className={cn(
+                      'block px-4 py-2 text-sm transition-colors last:rounded-b-lg',
                       pathname === f.href
                         ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
                         : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -81,9 +109,30 @@ export function Navbar() {
 
       {/* Mobile menu */}
       {open && (
-        <div className="lg:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 animate-fade-in">
+        <div className="lg:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 animate-fade-in max-h-[70vh] overflow-y-auto">
           <div className="px-4 py-3 space-y-1">
-            {FEATURES.map((f) => (
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+              AI-Powered
+            </div>
+            {AI_FEATURES.map((f) => (
+              <Link
+                key={f.id}
+                href={f.href}
+                onClick={() => setOpen(false)}
+                className={cn(
+                  'block px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                  pathname === f.href
+                    ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                )}
+              >
+                {f.icon} {f.name}
+              </Link>
+            ))}
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-t border-gray-100 dark:border-gray-700 mt-2 pt-3">
+              Offline Tools
+            </div>
+            {OFFLINE_FEATURES.map((f) => (
               <Link
                 key={f.id}
                 href={f.href}
