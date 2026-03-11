@@ -1,0 +1,16 @@
+{
+  "name": "StudyBoost",
+  "short_name": "StudyBoost",
+  "description": "Free AI-powered study tools for students",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#9333ea",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

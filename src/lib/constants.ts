@@ -1,0 +1,106 @@
+import { Feature } from '@/types';
+
+export const FEATURES: Feature[] = [
+  {
+    id: 'homework',
+    name: 'Homework Explainer',
+    description: 'Paste any homework question and get a clear, step-by-step explanation.',
+    href: '/homework',
+    icon: '📚',
+    aiPowered: true,
+    color: 'from-purple-500 to-indigo-500',
+  },
+  {
+    id: 'quiz',
+    name: 'Quiz Generator',
+    description: 'Turn your notes into interactive quiz questions with instant scoring.',
+    href: '/quiz',
+    icon: '❓',
+    aiPowered: true,
+    color: 'from-blue-500 to-cyan-500',
+  },
+  {
+    id: 'flashcards',
+    name: 'Flashcard Generator',
+    description: 'Generate flip-animated flashcard decks from any study material.',
+    href: '/flashcards',
+    icon: '🃏',
+    aiPowered: true,
+    color: 'from-emerald-500 to-teal-500',
+  },
+  {
+    id: 'summarizer',
+    name: 'Note Summarizer',
+    description: 'Condense long notes into concise, organized bullet-point summaries.',
+    href: '/summarizer',
+    icon: '📝',
+    aiPowered: true,
+    color: 'from-amber-500 to-orange-500',
+  },
+  {
+    id: 'math',
+    name: 'Math Problem Solver',
+    description: 'Get step-by-step solutions for algebra, calculus, and more.',
+    href: '/math',
+    icon: '🧮',
+    aiPowered: true,
+    color: 'from-rose-500 to-pink-500',
+  },
+  {
+    id: 'essay',
+    name: 'Essay Outline Generator',
+    description: 'Input a topic and get a structured, detailed essay outline.',
+    href: '/essay',
+    icon: '✍️',
+    aiPowered: true,
+    color: 'from-violet-500 to-purple-500',
+  },
+  {
+    id: 'planner',
+    name: 'Study Planner',
+    description: 'Create a visual weekly study schedule based on your subjects and availability.',
+    href: '/planner',
+    icon: '📅',
+    aiPowered: false,
+    color: 'from-sky-500 to-blue-500',
+  },
+  {
+    id: 'pomodoro',
+    name: 'Pomodoro Timer',
+    description: 'Stay focused with a configurable work/break interval timer.',
+    href: '/pomodoro',
+    icon: '⏱️',
+    aiPowered: false,
+    color: 'from-red-500 to-rose-500',
+  },
+  {
+    id: 'gpa',
+    name: 'GPA Calculator',
+    description: 'Calculate weighted and unweighted GPA from your grades and credits.',
+    href: '/gpa',
+    icon: '🎓',
+    aiPowered: false,
+    color: 'from-green-500 to-emerald-500',
+  },
+  {
+    id: 'citations',
+    name: 'Citation Generator',
+    description: 'Generate properly formatted MLA, APA, and Chicago citations.',
+    href: '/citations',
+    icon: '📖',
+    aiPowered: false,
+    color: 'from-indigo-500 to-violet-500',
+  },
+];
+
+export const NAV_LINKS = FEATURES.map((f) => ({ name: f.name, href: f.href }));
+
+export const GRADE_POINTS: Record<string, number> = {
+  'A+': 4.0, 'A': 4.0, 'A-': 3.7,
+  'B+': 3.3, 'B': 3.0, 'B-': 2.7,
+  'C+': 2.3, 'C': 2.0, 'C-': 1.7,
+  'D+': 1.3, 'D': 1.0, 'D-': 0.7,
+  'F': 0.0,
+};
+
+export const MAX_INPUT_LENGTH = 10000;
