@@ -73,3 +73,37 @@ export interface PomodoroSettings {
   longBreakMinutes: number;
   sessionsBeforeLong: number;
 }
+
+export interface SavedDeck {
+  id: string;
+  name: string;
+  type: 'quiz' | 'flashcards' | 'summary' | 'chat';
+  createdAt: number;
+  data: unknown;
+}
+
+export interface StudySession {
+  date: string; // YYYY-MM-DD
+  feature: string;
+  duration: number; // seconds
+  score?: number; // 0-100 for quizzes
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface VocabWord {
+  word: string;
+  definition: string;
+  partOfSpeech: string;
+  example: string;
+}
+
+export interface PracticeProblem {
+  problem: string;
+  hint: string;
+  solution: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
