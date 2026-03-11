@@ -16,6 +16,13 @@ export default function SummarizerPage() {
   const { hasKey } = useApiKey();
   const { output, loading, generate, stop } = useGeminiStream();
   const [notes, setNotes] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   if (!hasKey) {
     return (
@@ -89,6 +96,11 @@ export default function SummarizerPage() {
 
       {output && (
         <Card>
+          <div className="flex justify-end mb-2">
+            <Button variant="ghost" size="sm" onClick={handleCopy}>
+              {copied ? '\u2713 Copied!' : 'Copy'}
+            </Button>
+          </div>
           <MarkdownRenderer content={output} />
         </Card>
       )}

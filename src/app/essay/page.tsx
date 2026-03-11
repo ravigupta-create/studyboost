@@ -16,6 +16,13 @@ export default function EssayPage() {
   const { hasKey } = useApiKey();
   const { output, loading, generate, stop } = useGeminiStream();
   const [topic, setTopic] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   if (!hasKey) {
     return (
@@ -59,6 +66,7 @@ export default function EssayPage() {
           onChange={(e) => setTopic(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !loading && handleSubmit()}
           disabled={loading}
+          maxLength={500}
         />
         <div className="flex gap-3 mt-4">
           <Button
@@ -89,6 +97,11 @@ export default function EssayPage() {
 
       {output && (
         <Card>
+          <div className="flex justify-end mb-2">
+            <Button variant="ghost" size="sm" onClick={handleCopy}>
+              {copied ? '\u2713 Copied!' : 'Copy'}
+            </Button>
+          </div>
           <MarkdownRenderer content={output} />
         </Card>
       )}

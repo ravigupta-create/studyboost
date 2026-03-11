@@ -1,22 +1,16 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useGeminiJSON } from '@/hooks/useGemini';
 import { useApiKey } from '@/hooks/useApiKey';
 import { quizPrompt } from '@/lib/prompts';
+import { QuizQuestion } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Textarea } from '@/components/ui/Textarea';
 import { Spinner } from '@/components/ui/Spinner';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { ApiKeySetup } from '@/components/shared/ApiKeySetup';
-
-interface QuizQuestion {
-  question: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-}
 
 export default function QuizPage() {
   const { hasKey } = useApiKey();
@@ -26,11 +20,53 @@ export default function QuizPage() {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [showResult, setShowResult] = useState(false);
 
+  const score = useMemo(() => {
+    if (!questions) return { correct: 0, total: 0, percentage: 0 };
+    let correct = 0;
+    questions.forEach((q, i) => {
+      if (selectedAnswers[i] === q.correctIndex) correct++;
+    });
+    return {
+      correct,
+      total: questions.length,
+      percentage: Math.round((correct / questions.length) * 100),
+    };
+  }, [questions, selectedAnswers]);
+
+  // Keyboard support for quiz phase
+  useEffect(() => {
+    if (!questions || showResult) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const hasAnswered = selectedAnswers[currentIndex] !== undefined;
+
+      // Keys 1-4 to select answers
+      if (!hasAnswered && e.key >= '1' && e.key <= '4') {
+        const optionIndex = parseInt(e.key) - 1;
+        if (optionIndex < questions[currentIndex].options.length) {
+          setSelectedAnswers((prev) => ({ ...prev, [currentIndex]: optionIndex }));
+        }
+      }
+
+      // Enter to go next
+      if (e.key === 'Enter' && hasAnswered) {
+        if (currentIndex < questions.length - 1) {
+          setCurrentIndex((prev) => prev + 1);
+        } else {
+          setShowResult(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [questions, showResult, currentIndex, selectedAnswers]);
+
   if (!hasKey) {
     return (
       <div className="max-w-3xl mx-auto">
         <PageHeader
-          icon="❓"
+          icon="&#10067;"
           title="Quiz Generator"
           description="Turn your notes into interactive quiz questions with instant scoring."
           aiPowered
@@ -77,25 +113,12 @@ export default function QuizPage() {
     setShowResult(false);
   };
 
-  const getScore = () => {
-    if (!questions) return { correct: 0, total: 0, percentage: 0 };
-    let correct = 0;
-    questions.forEach((q, i) => {
-      if (selectedAnswers[i] === q.correctIndex) correct++;
-    });
-    return {
-      correct,
-      total: questions.length,
-      percentage: Math.round((correct / questions.length) * 100),
-    };
-  };
-
   // --- Input phase ---
   if (!questions) {
     return (
       <div className="max-w-3xl mx-auto">
         <PageHeader
-          icon="❓"
+          icon="&#10067;"
           title="Quiz Generator"
           description="Turn your notes into interactive quiz questions with instant scoring."
           aiPowered
@@ -130,11 +153,11 @@ export default function QuizPage() {
 
   // --- Score summary phase ---
   if (showResult) {
-    const { correct, total, percentage } = getScore();
+    const { correct, total, percentage } = score;
     return (
       <div className="max-w-3xl mx-auto">
         <PageHeader
-          icon="❓"
+          icon="&#10067;"
           title="Quiz Generator"
           description="Turn your notes into interactive quiz questions with instant scoring."
           aiPowered
@@ -176,7 +199,7 @@ export default function QuizPage() {
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader
-        icon="❓"
+        icon="&#10067;"
         title="Quiz Generator"
         description="Turn your notes into interactive quiz questions with instant scoring."
         aiPowered
@@ -237,6 +260,7 @@ export default function QuizPage() {
                 className={optionClass}
                 onClick={() => handleSelectAnswer(i)}
                 disabled={hasAnswered}
+                aria-label={`Option ${String.fromCharCode(65 + i)}: ${option}`}
               >
                 <span className="flex items-center gap-3">
                   <span className="flex-shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold border-current">

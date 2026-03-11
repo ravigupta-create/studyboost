@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useGeminiJSON } from '@/hooks/useGemini';
 import { useApiKey } from '@/hooks/useApiKey';
 import { flashcardPrompt } from '@/lib/prompts';
+import { Flashcard } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Textarea } from '@/components/ui/Textarea';
@@ -11,18 +12,34 @@ import { Spinner } from '@/components/ui/Spinner';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { ApiKeySetup } from '@/components/shared/ApiKeySetup';
 
-interface Flashcard {
-  front: string;
-  back: string;
-}
-
 export default function FlashcardsPage() {
   const { hasKey } = useApiKey();
-  const { data: rawCards, loading, generate } = useGeminiJSON<Flashcard[]>();
+  const { loading, generate } = useGeminiJSON<Flashcard[]>();
   const [text, setText] = useState('');
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+
+  // Keyboard support for flashcard navigation
+  useEffect(() => {
+    if (cards.length === 0) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        setFlipped(false);
+        setCurrentIndex((prev) => Math.max(0, prev - 1));
+      } else if (e.key === 'ArrowRight') {
+        setFlipped(false);
+        setCurrentIndex((prev) => Math.min(cards.length - 1, prev + 1));
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setFlipped((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cards]);
 
   // Sync rawCards into local state when they arrive
   const handleGenerate = async () => {
@@ -64,11 +81,18 @@ export default function FlashcardsPage() {
     setText('');
   };
 
+  const handleCardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      setFlipped((prev) => !prev);
+    }
+  };
+
   if (!hasKey) {
     return (
       <div className="max-w-3xl mx-auto">
         <PageHeader
-          icon="🃏"
+          icon="&#127183;"
           title="Flashcard Generator"
           description="Generate flip-animated flashcard decks from any study material."
           aiPowered
@@ -85,7 +109,7 @@ export default function FlashcardsPage() {
     return (
       <div className="max-w-3xl mx-auto">
         <PageHeader
-          icon="🃏"
+          icon="&#127183;"
           title="Flashcard Generator"
           description="Generate flip-animated flashcard decks from any study material."
           aiPowered
@@ -124,7 +148,7 @@ export default function FlashcardsPage() {
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader
-        icon="🃏"
+        icon="&#127183;"
         title="Flashcard Generator"
         description="Generate flip-animated flashcard decks from any study material."
         aiPowered
@@ -149,6 +173,10 @@ export default function FlashcardsPage() {
         className="perspective-1000 mb-6 cursor-pointer"
         style={{ perspective: '1000px' }}
         onClick={() => setFlipped((prev) => !prev)}
+        onKeyDown={handleCardKeyDown}
+        role="button"
+        tabIndex={0}
+        aria-label={`Flashcard ${currentIndex + 1} of ${cards.length}. ${flipped ? 'Answer: ' + currentCard.back : 'Question: ' + currentCard.front}. Press Space or Enter to flip.`}
       >
         <div
           className="relative w-full min-h-[280px] transition-transform duration-500"
