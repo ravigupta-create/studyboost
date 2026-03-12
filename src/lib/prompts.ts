@@ -226,6 +226,36 @@ Return a JSON array:
 Exactly 5 problems, 4 options each, correctIndex 0-based.`;
 }
 
+export function retryPracticePrompt(courseName: string, unitName: string, topicName: string, description: string, missedConcepts: string[]): string {
+  return `Generate 5 multiple-choice problems for an honors ${courseName} student who FAILED their first attempt at this topic. Focus on their specific weaknesses.
+
+Topic: ${topicName} (${unitName})
+What was taught: ${description}
+
+THE STUDENT STRUGGLED WITH THESE SPECIFIC AREAS:
+${missedConcepts.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+PROBLEM DESIGN — target their weaknesses:
+- Problems 1-3: Focus DIRECTLY on the areas they struggled with above. Different angles on the same weak concepts
+- Problem 4: Combine a weak area with a concept they likely know, to build connections
+- Problem 5: "hard" — honors-level problem that requires the weak concepts
+- Distractors must be plausible common mistakes. Solutions must teach step-by-step
+- Use LaTeX with $ delimiters for all math
+
+Return a JSON array:
+[
+  {
+    "question": "problem text with $LaTeX$",
+    "options": ["$A$", "$B$", "$C$", "$D$"],
+    "correctIndex": 0,
+    "difficulty": "easy",
+    "solution": "Step-by-step solution that teaches HOW and WHY."
+  }
+]
+
+Difficulty distribution: 2 easy, 2 medium, 1 hard. Exactly 5 problems, 4 options each, correctIndex 0-based.`;
+}
+
 export function translatePrompt(text: string, targetLang: string): string {
   return `Translate the following text to ${targetLang}. Provide:
 1. The translation

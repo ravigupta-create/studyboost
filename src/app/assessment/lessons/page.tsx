@@ -7,7 +7,7 @@ import { useAssessment } from '@/hooks/useAssessment';
 import { useGeminiStream } from '@/hooks/useGemini';
 import { useToast } from '@/hooks/useToast';
 import { callGeminiJSON } from '@/lib/gemini';
-import { lessonPrompt, practiceProblemsPrompt } from '@/lib/prompts';
+import { lessonPrompt, practiceProblemsPrompt, retryPracticePrompt } from '@/lib/prompts';
 import { COURSES, type Course, type Topic, type Unit } from '@/lib/curriculum';
 import { LessonProblem } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -43,6 +43,8 @@ export default function LessonsPage() {
   const [checkedProblems, setCheckedProblems] = useState<Record<number, number>>({});
   const [masteryDetermined, setMasteryDetermined] = useState(false);
   const [mastered, setMastered] = useState(false);
+  const [practiceOnly, setPracticeOnly] = useState(false); // skip lesson, go straight to practice
+  const [missedConcepts, setMissedConcepts] = useState<string[]>([]); // for targeted retry
 
   const resultRef = useRef<HTMLDivElement>(null);
   const practiceRef = useRef<HTMLHeadingElement>(null);
@@ -93,62 +95,121 @@ export default function LessonsPage() {
     filteredUnits.flatMap(unit => unit.topics.filter(t => !completionMap[t.id]).map(topic => ({ course: selectedCourse, unit, topic }))),
   [filteredUnits, selectedCourse, completionMap]);
 
+  // Generate practice problems (shared by startLesson and startPracticeOnly)
+  const generateProblems = useCallback(async (course: Course, unit: Unit, topic: Topic, missed?: string[]) => {
+    if (!apiKey) return;
+    setProblemsLoading(true);
+    try {
+      const prompt = missed && missed.length > 0
+        ? retryPracticePrompt(course.name, unit.name, topic.name, topic.description, missed)
+        : practiceProblemsPrompt(course.name, unit.name, topic.name, topic.description);
+      const result = await callGeminiJSON<LessonProblem[]>(apiKey, prompt);
+      if (Array.isArray(result) && result.length > 0) setProblems(result);
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Failed to generate practice.', 'error');
+    } finally {
+      setProblemsLoading(false);
+    }
+  }, [apiKey, addToast]);
+
   // Start lesson: teaching + practice generate in parallel
   const startLesson = useCallback(async (course: Course, unit: Unit, topic: Topic) => {
     stop();
     setActiveTopic({ course, unit, topic });
     setProblems([]);
-    setProblemsLoading(true);
     setCheckedProblems({});
     setMasteryDetermined(false);
     setMastered(false);
+    setPracticeOnly(false);
+    setMissedConcepts([]);
     markLessonViewed(topic.id);
 
     generate(lessonPrompt(course.name, unit.name, topic.name, topic.description));
+    generateProblems(course, unit, topic);
+  }, [generate, stop, markLessonViewed, generateProblems]);
 
-    if (apiKey) {
-      try {
-        const result = await callGeminiJSON<LessonProblem[]>(apiKey, practiceProblemsPrompt(course.name, unit.name, topic.name, topic.description));
-        if (Array.isArray(result) && result.length > 0) setProblems(result);
-      } catch (err: unknown) {
-        addToast(err instanceof Error ? err.message : 'Failed to generate practice.', 'error');
-      } finally {
-        setProblemsLoading(false);
-      }
-    }
-  }, [generate, stop, markLessonViewed, apiKey, addToast]);
+  // Skip straight to practice (for students who know the concept but got assessment wrong)
+  const startPracticeOnly = useCallback(async (course: Course, unit: Unit, topic: Topic) => {
+    stop();
+    setActiveTopic({ course, unit, topic });
+    setProblems([]);
+    setCheckedProblems({});
+    setMasteryDetermined(false);
+    setMastered(false);
+    setPracticeOnly(true);
+    setMissedConcepts([]);
+    markLessonViewed(topic.id);
+
+    generateProblems(course, unit, topic);
+  }, [stop, markLessonViewed, generateProblems]);
 
   // Check answer for a problem
   const checkAnswer = useCallback((idx: number, option: number) => {
     setCheckedProblems(prev => prev[idx] !== undefined ? prev : { ...prev, [idx]: option });
   }, []);
 
-  // Auto-scroll to practice section when lesson finishes streaming and problems are ready
-  useEffect(() => {
-    if (!lessonLoading && problems.length > 0 && Object.keys(checkedProblems).length === 0) {
-      setTimeout(() => practiceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
-    }
-  }, [lessonLoading, problems, checkedProblems]);
-
-  // Silently evaluate mastery when all problems are checked
+  // Keyboard shortcuts: 1-4 to select answer for next unchecked problem
   useEffect(() => {
     if (problems.length === 0 || masteryDetermined) return;
+    const handler = (e: KeyboardEvent) => {
+      const key = parseInt(e.key);
+      if (key >= 1 && key <= 4) {
+        // Find first unchecked problem
+        const nextIdx = problems.findIndex((_, i) => checkedProblems[i] === undefined);
+        if (nextIdx >= 0) checkAnswer(nextIdx, key - 1);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [problems, checkedProblems, masteryDetermined, checkAnswer]);
+
+  // Auto-scroll to practice section when lesson finishes streaming (or immediately in practice-only mode)
+  useEffect(() => {
+    if (problems.length > 0 && Object.keys(checkedProblems).length === 0 && (practiceOnly || !lessonLoading)) {
+      setTimeout(() => practiceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    }
+  }, [lessonLoading, problems, checkedProblems, practiceOnly]);
+
+  // Evaluate mastery — supports early exit if clearly mastered
+  useEffect(() => {
+    if (problems.length === 0 || masteryDetermined) return;
+    const checkedCount = Object.keys(checkedProblems).length;
+    if (checkedCount === 0) return;
+
     const allChecked = problems.every((_, i) => checkedProblems[i] !== undefined);
+
+    // Early mastery: if first 4 are all correct (including mediums), skip problem 5
+    if (!allChecked && checkedCount >= 4) {
+      const allCorrectSoFar = Array.from({ length: checkedCount }, (_, i) => i).every(i => checkedProblems[i] === problems[i].correctIndex);
+      if (allCorrectSoFar) {
+        setMasteryDetermined(true);
+        setMastered(true);
+        if (activeTopic) markLessonComplete(activeTopic.topic.id);
+        setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+        return;
+      }
+    }
+
     if (!allChecked) return;
 
     let earned = 0, total = 0;
+    const missed: string[] = [];
     problems.forEach((p, i) => {
       const pts = DIFF_PTS[p.difficulty] || 1;
       total += pts;
-      if (checkedProblems[i] === p.correctIndex) earned += pts;
+      if (checkedProblems[i] === p.correctIndex) {
+        earned += pts;
+      } else {
+        missed.push(p.question);
+      }
     });
 
     const passed = total > 0 && (earned / total) >= MASTERY_RATIO;
     setMasteryDetermined(true);
     setMastered(passed);
+    if (!passed) setMissedConcepts(missed);
     if (passed && activeTopic) markLessonComplete(activeTopic.topic.id);
 
-    // Scroll to result
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
   }, [problems, checkedProblems, masteryDetermined, activeTopic, markLessonComplete]);
 
@@ -161,9 +222,18 @@ export default function LessonsPage() {
     startLesson(next.course, next.unit, next.topic);
   }, [activeTopic, unmasteredTopics, stop, startLesson]);
 
+  // Retry with targeted problems based on what they got wrong
   const retryLesson = useCallback(() => {
-    if (activeTopic) startLesson(activeTopic.course, activeTopic.unit, activeTopic.topic);
-  }, [activeTopic, startLesson]);
+    if (!activeTopic) return;
+    stop();
+    setProblems([]);
+    setCheckedProblems({});
+    setMasteryDetermined(false);
+    setMastered(false);
+    setPracticeOnly(true); // no need to re-read the lesson on retry
+
+    generateProblems(activeTopic.course, activeTopic.unit, activeTopic.topic, missedConcepts);
+  }, [activeTopic, stop, generateProblems, missedConcepts]);
 
   useEffect(() => {
     if (latestResult) {
@@ -195,21 +265,23 @@ export default function LessonsPage() {
           </span>
         </div>
 
-        {/* Teaching content */}
-        <Card className="mb-6">
-          {lessonLoading && !output && (
-            <div className="text-center py-12">
-              <Spinner className="h-8 w-8 mx-auto mb-4" />
-              <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
-            </div>
-          )}
-          {output && <MarkdownRenderer content={output} />}
-          {lessonLoading && output && (
-            <div className="flex justify-center mt-4">
-              <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
-            </div>
-          )}
-        </Card>
+        {/* Teaching content — hidden in practice-only mode */}
+        {!practiceOnly && (
+          <Card className="mb-6">
+            {lessonLoading && !output && (
+              <div className="text-center py-12">
+                <Spinner className="h-8 w-8 mx-auto mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
+              </div>
+            )}
+            {output && <MarkdownRenderer content={output} />}
+            {lessonLoading && output && (
+              <div className="flex justify-center mt-4">
+                <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Practice problems — part of the lesson */}
         {problemsLoading && (
@@ -223,7 +295,7 @@ export default function LessonsPage() {
           <>
             <h3 ref={practiceRef} className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">Now you try</h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-              Click an answer to check if you&apos;re right. If you get it wrong, you&apos;ll see how to solve it.
+              Click an answer or press 1-4 to check. Wrong answers show step-by-step solutions.
             </p>
 
             <div className="space-y-4 mb-6">
@@ -314,10 +386,15 @@ export default function LessonsPage() {
                   <Card className="!border-amber-300 dark:!border-amber-700 bg-amber-50 dark:bg-amber-900/10 mb-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-amber-700 dark:text-amber-300">Review the problems you missed above, then try again.</p>
-                        <p className="text-sm text-amber-600 dark:text-amber-400">Read through the step-by-step solutions — they&apos;ll help.</p>
+                        <p className="font-semibold text-amber-700 dark:text-amber-300">Review the solutions above, then try again.</p>
+                        <p className="text-sm text-amber-600 dark:text-amber-400">Next attempt will focus on what you missed.</p>
                       </div>
                       <div className="flex gap-2">
+                        {practiceOnly && (
+                          <Button variant="ghost" size="sm" onClick={() => { if (activeTopic) startLesson(activeTopic.course, activeTopic.unit, activeTopic.topic); }}>
+                            Read Lesson First
+                          </Button>
+                        )}
                         <Button variant="secondary" size="sm" onClick={() => { stop(); setActiveTopic(null); }}>
                           Back to Topics
                         </Button>
@@ -414,18 +491,29 @@ export default function LessonsPage() {
               </button>
               {isExpanded && (
                 <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 space-y-2">
-                  {unit.topics.filter(t => !completionMap[t.id]).map(topic => (
-                    <div key={topic.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750">
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm text-gray-300 dark:text-gray-600">{'\u25CB'}</span>
-                        <div>
-                          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{topic.name}</p>
-                          <p className="text-xs text-gray-400 dark:text-gray-500">{topic.description}</p>
+                  {unit.topics.filter(t => !completionMap[t.id]).map(topic => {
+                    // Show "Skip to Practice" for units where student got answers wrong (not IDK) — they may already know the concept
+                    const showSkipOption = !hadSkips && score !== undefined && score > 0;
+                    return (
+                      <div key={topic.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm text-gray-300 dark:text-gray-600">{'\u25CB'}</span>
+                          <div>
+                            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{topic.name}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">{topic.description}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          {showSkipOption && (
+                            <Button size="sm" variant="ghost" onClick={() => startPracticeOnly(selectedCourse, unit, topic)}>
+                              Just Practice
+                            </Button>
+                          )}
+                          <Button size="sm" variant="primary" onClick={() => startLesson(selectedCourse, unit, topic)}>Learn</Button>
                         </div>
                       </div>
-                      <Button size="sm" variant="primary" onClick={() => startLesson(selectedCourse, unit, topic)}>Learn</Button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </Card>
