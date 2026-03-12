@@ -138,6 +138,7 @@ export interface LessonProblem {
   options: string[];
   correctIndex: number;
   difficulty: 'easy' | 'medium' | 'hard';
+  hint?: string;
   solution: string;
 }
 

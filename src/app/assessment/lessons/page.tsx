@@ -45,6 +45,7 @@ export default function LessonsPage() {
   const [mastered, setMastered] = useState(false);
   const [practiceOnly, setPracticeOnly] = useState(false); // skip lesson, go straight to practice
   const [missedConcepts, setMissedConcepts] = useState<string[]>([]); // for targeted retry
+  const [showHint, setShowHint] = useState<Record<number, boolean>>({}); // hint visibility per problem
 
   const resultRef = useRef<HTMLDivElement>(null);
   const practiceRef = useRef<HTMLHeadingElement>(null);
@@ -122,6 +123,7 @@ export default function LessonsPage() {
     setMastered(false);
     setPracticeOnly(false);
     setMissedConcepts([]);
+    setShowHint({});
     markLessonViewed(topic.id);
 
     generate(lessonPrompt(course.name, unit.name, topic.name, topic.description));
@@ -138,6 +140,7 @@ export default function LessonsPage() {
     setMastered(false);
     setPracticeOnly(true);
     setMissedConcepts([]);
+    setShowHint({});
     markLessonViewed(topic.id);
 
     generateProblems(course, unit, topic);
@@ -231,6 +234,7 @@ export default function LessonsPage() {
     setMasteryDetermined(false);
     setMastered(false);
     setPracticeOnly(true); // no need to re-read the lesson on retry
+    setShowHint({});
 
     generateProblems(activeTopic.course, activeTopic.unit, activeTopic.topic, missedConcepts);
   }, [activeTopic, stop, generateProblems, missedConcepts]);
@@ -339,6 +343,24 @@ export default function LessonsPage() {
                         );
                       })}
                     </div>
+
+                    {/* Hint button — available before answering */}
+                    {!isChecked && problem.hint && (
+                      <div className="mt-3">
+                        {showHint[pIdx] ? (
+                          <div className="px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                            <p className="text-sm text-blue-700 dark:text-blue-300"><span className="font-semibold">Hint:</span> <MathText text={problem.hint} /></p>
+                          </div>
+                        ) : (
+                          <button
+                            className="text-xs text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+                            onClick={() => setShowHint(prev => ({ ...prev, [pIdx]: true }))}
+                          >
+                            Need a hint?
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {isChecked && (
                       <div className={`mt-4 p-4 rounded-lg border ${isCorrect
