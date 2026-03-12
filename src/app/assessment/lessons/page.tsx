@@ -64,23 +64,31 @@ export default function LessonsPage() {
     return map;
   }, [lessonProgress]);
 
-  // Filter units: only show unmastered ones (score < 100% or had skips)
-  // If no assessment yet, show all units
+  // Filter units: only show ones that still have unmastered topics
+  // A unit disappears entirely once all its topics are marked mastered
   const filteredUnits = useMemo(() => {
-    if (!latestResult) return selectedCourse.units;
-    return selectedCourse.units.filter(unit => {
+    const unitsFromAssessment = !latestResult ? selectedCourse.units : selectedCourse.units.filter(unit => {
       const score = unitScoreMap[unit.id];
       const hadSkips = unitSkipMap[unit.id];
-      // Show if: not perfect, or had "I don't know" answers, or no score data
       return score === undefined || score < 100 || hadSkips;
     });
-  }, [selectedCourse, latestResult, unitScoreMap, unitSkipMap]);
+    // Further filter: hide units where every topic is mastered via lessons
+    return unitsFromAssessment.filter(unit =>
+      unit.topics.some(topic => !completionMap[topic.id])
+    );
+  }, [selectedCourse, latestResult, unitScoreMap, unitSkipMap, completionMap]);
 
-  // Count mastered units for summary
-  const masteredCount = useMemo(() => {
-    if (!latestResult) return 0;
+  // Count mastered units (assessment-mastered + lesson-mastered)
+  const masteredUnitCount = useMemo(() => {
     return selectedCourse.units.length - filteredUnits.length;
-  }, [selectedCourse, latestResult, filteredUnits]);
+  }, [selectedCourse, filteredUnits]);
+
+  // Total mastered topics via lessons
+  const masteredTopicCount = useMemo(() => {
+    return selectedCourse.units.reduce((sum, unit) =>
+      sum + unit.topics.filter(t => completionMap[t.id]).length, 0
+    );
+  }, [selectedCourse, completionMap]);
 
   const toggleUnit = useCallback((unitId: string) => {
     setExpandedUnits(prev => {
@@ -144,6 +152,25 @@ export default function LessonsPage() {
     );
   }
 
+  const handleMarkMastered = useCallback(() => {
+    if (!activeTopic) return;
+    markLessonComplete(activeTopic.topic.id);
+    // After marking complete, the unmasteredTopics list will update.
+    // Navigate to next unmastered topic, or back to list if none left.
+    // We need to look at what the next topic will be after this one is removed.
+    const currentIdx = unmasteredTopics.findIndex(t => t.topic.id === activeTopic.topic.id);
+    const remaining = unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id);
+    if (remaining.length === 0) {
+      stop();
+      setActiveTopic(null);
+    } else {
+      // Pick the next one (or the last if we were at the end)
+      const nextIdx = Math.min(currentIdx, remaining.length - 1);
+      const next = remaining[nextIdx];
+      startLesson(next.course, next.unit, next.topic);
+    }
+  }, [activeTopic, markLessonComplete, unmasteredTopics, stop, startLesson]);
+
   // Lesson View
   if (activeTopic) {
     const isComplete = completionMap[activeTopic.topic.id];
@@ -190,7 +217,7 @@ export default function LessonsPage() {
             </div>
             <Button
               size="sm"
-              onClick={() => markLessonComplete(activeTopic.topic.id)}
+              onClick={handleMarkMastered}
               disabled={isComplete}
               variant={isComplete ? 'secondary' : 'primary'}
             >
@@ -235,7 +262,8 @@ export default function LessonsPage() {
                   {filteredUnits.length} unit{filteredUnits.length !== 1 ? 's' : ''} to learn
                 </p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {masteredCount > 0 && <>{masteredCount} unit{masteredCount > 1 ? 's' : ''} mastered (hidden) &middot; </>}
+                  {masteredUnitCount > 0 && <>{masteredUnitCount} unit{masteredUnitCount > 1 ? 's' : ''} mastered (hidden) &middot; </>}
+                  {masteredTopicCount > 0 && <>{masteredTopicCount} topic{masteredTopicCount > 1 ? 's' : ''} mastered &middot; </>}
                   {unmasteredTopics.length} topic{unmasteredTopics.length !== 1 ? 's' : ''} remaining
                 </p>
               </div>
@@ -250,12 +278,12 @@ export default function LessonsPage() {
             </div>
           </Card>
 
-          {filteredUnits.length === 0 && (
+          {filteredUnits.length === 0 && unmasteredTopics.length === 0 && (
             <Card className="text-center py-8">
               <p className="text-2xl mb-2">&#127881;</p>
-              <p className="font-semibold text-gray-900 dark:text-gray-100 mb-1">All units mastered!</p>
+              <p className="font-semibold text-gray-900 dark:text-gray-100 mb-1">You&apos;ve mastered everything!</p>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                You&apos;ve completed all lessons for this course. Retake the assessment to refresh.
+                All topics for {selectedCourse.name} are complete. You&apos;ve mastered what you were assessed on.
               </p>
             </Card>
           )}
@@ -306,32 +334,27 @@ export default function LessonsPage() {
 
               {isExpanded && (
                 <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 space-y-2">
-                  {unit.topics.map(topic => {
-                    const isCompleted = completionMap[topic.id];
-                    return (
-                      <div
-                        key={topic.id}
-                        className={`flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 ${isCompleted ? 'opacity-60' : ''}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className={`text-sm ${isCompleted ? 'text-green-500' : 'text-gray-300 dark:text-gray-600'}`}>
-                            {isCompleted ? '\u2705' : '\u25CB'}
-                          </span>
-                          <div>
-                            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{topic.name}</p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500">{topic.description}</p>
-                          </div>
+                  {unit.topics.filter(topic => !completionMap[topic.id]).map(topic => (
+                    <div
+                      key={topic.id}
+                      className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-gray-300 dark:text-gray-600">{'\u25CB'}</span>
+                        <div>
+                          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{topic.name}</p>
+                          <p className="text-xs text-gray-400 dark:text-gray-500">{topic.description}</p>
                         </div>
-                        <Button
-                          size="sm"
-                          variant={isCompleted ? 'ghost' : 'primary'}
-                          onClick={() => startLesson(selectedCourse, unit, topic)}
-                        >
-                          {isCompleted ? 'Review' : 'Learn'}
-                        </Button>
                       </div>
-                    );
-                  })}
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => startLesson(selectedCourse, unit, topic)}
+                      >
+                        Learn
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               )}
             </Card>
