@@ -133,6 +133,14 @@ export interface AssessmentResult {
   answers: Record<number, number>; // -1 = "I don't know this yet"
 }
 
+export interface LessonProblem {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+  solution: string;
+}
+
 export interface PausedAssessment {
   courseId: string;
   questions: AssessmentQuestion[];

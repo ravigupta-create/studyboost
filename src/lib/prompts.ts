@@ -182,31 +182,33 @@ Bullet-point cheat sheet of the key formulas/rules from this topic.
 Do NOT include practice problems — those are handled separately. Every sentence should teach something.`;
 }
 
-export function masteryQuizPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
-  return `You are creating a mastery check quiz for an honors high school math student who just learned this topic.
+export function practiceProblemsPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
+  return `You are creating practice problems for an honors high school math student who just learned this topic. These problems will determine whether they have mastered the material.
 
 Course: ${courseName}
 Unit: ${unitName}
 Topic: ${topicName}
 What was taught: ${description}
 
-Generate exactly 5 multiple-choice questions that test whether the student truly understood the topic. Questions should:
-- Range from straightforward application (Q1-2) to deeper understanding (Q3-4) to challenging honors-level (Q5)
-- Use LaTeX notation with $ delimiters for all math
-- Have plausible wrong answers (common mistakes as distractors)
-- Include a clear step-by-step explanation for the correct answer
+Generate exactly 5 multiple-choice problems with increasing difficulty. The difficulty distribution MUST be:
+- Problems 1-2: "easy" — direct application of a single concept
+- Problems 3-4: "medium" — requires combining concepts or multi-step reasoning
+- Problem 5: "hard" — honors-level challenge, requires deep understanding
+
+Use LaTeX notation with $ delimiters for all math. Wrong answers should be plausible (common student mistakes as distractors). The step-by-step solution should teach the student HOW to solve it if they got it wrong.
 
 Return a JSON array:
 [
   {
-    "question": "question text with $LaTeX$",
+    "question": "problem text with $LaTeX$",
     "options": ["$option A$", "$option B$", "$option C$", "$option D$"],
     "correctIndex": 0,
-    "explanation": "Step-by-step explanation showing how to solve it"
+    "difficulty": "easy",
+    "solution": "Complete step-by-step solution showing how to arrive at the answer"
   }
 ]
 
-Generate exactly 5 questions. Each must have exactly 4 options. correctIndex is 0-based.`;
+Generate exactly 5 problems. Each must have exactly 4 options. correctIndex is 0-based. difficulty must be "easy", "medium", or "hard".`;
 }
 
 export function translatePrompt(text: string, targetLang: string): string {

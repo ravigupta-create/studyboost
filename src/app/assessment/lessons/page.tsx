@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useApiKey } from '@/hooks/useApiKey';
 import { useAssessment } from '@/hooks/useAssessment';
 import { useGeminiStream } from '@/hooks/useGemini';
 import { useToast } from '@/hooks/useToast';
 import { callGeminiJSON } from '@/lib/gemini';
-import { lessonPrompt, masteryQuizPrompt } from '@/lib/prompts';
+import { lessonPrompt, practiceProblemsPrompt } from '@/lib/prompts';
 import { COURSES, type Course, type Topic, type Unit } from '@/lib/curriculum';
-import { QuizQuestion } from '@/types';
+import { LessonProblem } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
@@ -20,9 +20,13 @@ import { MarkdownRenderer } from '@/components/shared/MarkdownRenderer';
 import { MathText } from '@/components/shared/MathText';
 
 const IDK = -1;
-const MASTERY_THRESHOLD = 4; // out of 5
 
-type LessonPhase = 'learn' | 'quiz-loading' | 'quiz' | 'result';
+// Weighted scoring: easy=1, medium=2, hard=3
+// 5 problems: 2 easy (2pts) + 2 medium (4pts) + 1 hard (3pts) = 9 total
+// Need 7/9 (78%) to master — can't just get easy ones right
+const DIFFICULTY_POINTS: Record<string, number> = { easy: 1, medium: 2, hard: 3 };
+const MASTERY_POINTS = 7;
+const TOTAL_POINTS = 9;
 
 export default function LessonsPage() {
   const { hasKey, apiKey } = useApiKey();
@@ -35,11 +39,13 @@ export default function LessonsPage() {
   const [activeTopic, setActiveTopic] = useState<{ course: Course; unit: Unit; topic: Topic } | null>(null);
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
 
-  // Mastery quiz state
-  const [lessonPhase, setLessonPhase] = useState<LessonPhase>('learn');
-  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
-  const [quizIndex, setQuizIndex] = useState(0);
-  const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
+  // Practice problems state
+  const [problems, setProblems] = useState<LessonProblem[]>([]);
+  const [problemsLoading, setProblemsLoading] = useState(false);
+  const [checkedProblems, setCheckedProblems] = useState<Record<number, number>>({}); // index -> selected option
+  const [masteryResult, setMasteryResult] = useState<'mastered' | 'not-yet' | null>(null);
+
+  const practiceRef = useRef<HTMLDivElement>(null);
 
   const selectedCourse = useMemo(() => COURSES.find(c => c.id === selectedCourseId) || COURSES[0], [selectedCourseId]);
 
@@ -112,66 +118,80 @@ export default function LessonsPage() {
     );
   }, [filteredUnits, selectedCourse, completionMap]);
 
-  const startLesson = useCallback((course: Course, unit: Unit, topic: Topic) => {
+  // Start lesson: stream teaching content + generate practice problems in parallel
+  const startLesson = useCallback(async (course: Course, unit: Unit, topic: Topic) => {
     stop();
     setActiveTopic({ course, unit, topic });
-    setLessonPhase('learn');
-    setQuizQuestions([]);
-    setQuizIndex(0);
-    setQuizAnswers({});
+    setProblems([]);
+    setProblemsLoading(true);
+    setCheckedProblems({});
+    setMasteryResult(null);
     markLessonViewed(topic.id);
+
+    // Start both in parallel
     generate(lessonPrompt(course.name, unit.name, topic.name, topic.description));
-  }, [generate, stop, markLessonViewed]);
 
-  // Start the mastery quiz after reading the lesson
-  const startMasteryQuiz = useCallback(async () => {
-    if (!activeTopic || !apiKey) return;
-    setLessonPhase('quiz-loading');
-    try {
-      const questions = await callGeminiJSON<QuizQuestion[]>(
-        apiKey,
-        masteryQuizPrompt(
-          activeTopic.course.name,
-          activeTopic.unit.name,
-          activeTopic.topic.name,
-          activeTopic.topic.description,
-        )
-      );
-      if (!Array.isArray(questions) || questions.length === 0) {
-        throw new Error('No questions generated.');
+    if (apiKey) {
+      try {
+        const result = await callGeminiJSON<LessonProblem[]>(
+          apiKey,
+          practiceProblemsPrompt(course.name, unit.name, topic.name, topic.description)
+        );
+        if (Array.isArray(result) && result.length > 0) {
+          setProblems(result);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to generate practice problems.';
+        addToast(msg, 'error');
+      } finally {
+        setProblemsLoading(false);
       }
-      setQuizQuestions(questions);
-      setQuizIndex(0);
-      setQuizAnswers({});
-      setLessonPhase('quiz');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate quiz.';
-      addToast(msg, 'error');
-      setLessonPhase('learn');
     }
-  }, [activeTopic, apiKey, addToast]);
+  }, [generate, stop, markLessonViewed, apiKey, addToast]);
 
-  // Quiz score
-  const quizScore = useMemo(() => {
-    if (quizQuestions.length === 0) return { correct: 0, total: 0 };
-    let correct = 0;
-    quizQuestions.forEach((q, i) => {
-      if (quizAnswers[i] === q.correctIndex) correct++;
+  // Check a single problem answer
+  const checkAnswer = useCallback((problemIndex: number, selectedOption: number) => {
+    setCheckedProblems(prev => {
+      if (prev[problemIndex] !== undefined) return prev; // already checked
+      return { ...prev, [problemIndex]: selectedOption };
     });
-    return { correct, total: quizQuestions.length };
-  }, [quizQuestions, quizAnswers]);
+  }, []);
 
-  const isMastered = quizScore.correct >= MASTERY_THRESHOLD;
+  // Calculate weighted score
+  const scoreInfo = useMemo(() => {
+    if (problems.length === 0) return null;
+    const allChecked = problems.every((_, i) => checkedProblems[i] !== undefined);
+    if (!allChecked) return null;
 
-  // Finish quiz: auto-determine mastery
-  const finishMasteryQuiz = useCallback(() => {
-    setLessonPhase('result');
-    if (isMastered && activeTopic) {
-      markLessonComplete(activeTopic.topic.id);
+    let earned = 0;
+    let total = 0;
+    problems.forEach((p, i) => {
+      const pts = DIFFICULTY_POINTS[p.difficulty] || 1;
+      total += pts;
+      if (checkedProblems[i] === p.correctIndex) {
+        earned += pts;
+      }
+    });
+
+    const correct = problems.filter((p, i) => checkedProblems[i] === p.correctIndex).length;
+    return { earned, total: total || TOTAL_POINTS, correct, outOf: problems.length, mastered: earned >= MASTERY_POINTS };
+  }, [problems, checkedProblems]);
+
+  // Auto-determine mastery when all problems are checked
+  useEffect(() => {
+    if (scoreInfo && masteryResult === null) {
+      if (scoreInfo.mastered) {
+        setMasteryResult('mastered');
+        if (activeTopic) {
+          markLessonComplete(activeTopic.topic.id);
+        }
+      } else {
+        setMasteryResult('not-yet');
+      }
     }
-  }, [isMastered, activeTopic, markLessonComplete]);
+  }, [scoreInfo, masteryResult, activeTopic, markLessonComplete]);
 
-  // After mastery result, go to next topic
+  // Navigate to next topic after mastery
   const goToNextTopic = useCallback(() => {
     if (!activeTopic) return;
     const remaining = unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id);
@@ -185,34 +205,10 @@ export default function LessonsPage() {
     }
   }, [activeTopic, unmasteredTopics, stop, startLesson]);
 
-  // Retry: go back to lesson
   const retryLesson = useCallback(() => {
     if (!activeTopic) return;
     startLesson(activeTopic.course, activeTopic.unit, activeTopic.topic);
   }, [activeTopic, startLesson]);
-
-  // Keyboard support for quiz
-  useEffect(() => {
-    if (lessonPhase !== 'quiz' || quizQuestions.length === 0) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const hasAnswered = quizAnswers[quizIndex] !== undefined;
-      if (!hasAnswered && e.key >= '1' && e.key <= '4') {
-        const idx = parseInt(e.key) - 1;
-        if (idx < (quizQuestions[quizIndex]?.options?.length ?? 0)) {
-          setQuizAnswers(prev => ({ ...prev, [quizIndex]: idx }));
-        }
-      }
-      if (e.key === 'Enter' && hasAnswered) {
-        if (quizIndex < quizQuestions.length - 1) {
-          setQuizIndex(prev => prev + 1);
-        } else {
-          finishMasteryQuiz();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  });
 
   // Auto-expand units
   useEffect(() => {
@@ -232,235 +228,201 @@ export default function LessonsPage() {
     );
   }
 
-  // ==================== LESSON VIEW ====================
+  // ==================== LESSON VIEW (single page: teaching + practice) ====================
   if (activeTopic) {
-    // --- Phase: Learning ---
-    if (lessonPhase === 'learn') {
-      return (
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="flex items-center gap-2 mb-4">
-            <Button variant="ghost" size="sm" onClick={() => { stop(); setActiveTopic(null); }}>
-              &larr; Back to Topics
-            </Button>
-            <span className="text-sm text-gray-400 dark:text-gray-500">
-              {activeTopic.unit.name} &rsaquo; {activeTopic.topic.name}
-            </span>
-          </div>
+    const allChecked = problems.length > 0 && problems.every((_, i) => checkedProblems[i] !== undefined);
 
-          <Card className="mb-4">
-            {lessonLoading && !output && (
-              <div className="text-center py-12">
-                <Spinner className="h-8 w-8 mx-auto mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
-              </div>
-            )}
-            {output && <MarkdownRenderer content={output} />}
-            {lessonLoading && output && (
-              <div className="flex justify-center mt-4">
-                <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
-              </div>
-            )}
-          </Card>
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-2 mb-4">
+          <Button variant="ghost" size="sm" onClick={() => { stop(); setActiveTopic(null); }}>
+            &larr; Back to Topics
+          </Button>
+          <span className="text-sm text-gray-400 dark:text-gray-500">
+            {activeTopic.unit.name} &rsaquo; {activeTopic.topic.name}
+          </span>
+        </div>
 
-          {!lessonLoading && output && (
-            <div className="flex justify-end">
-              <Button onClick={startMasteryQuiz}>
-                Ready — Take Mastery Quiz
-              </Button>
+        {/* === Teaching Content === */}
+        <Card className="mb-6">
+          {lessonLoading && !output && (
+            <div className="text-center py-12">
+              <Spinner className="h-8 w-8 mx-auto mb-4" />
+              <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
             </div>
           )}
-        </div>
-      );
-    }
-
-    // --- Phase: Quiz Loading ---
-    if (lessonPhase === 'quiz-loading') {
-      return (
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="flex items-center gap-2 mb-4">
-            <Button variant="ghost" size="sm" onClick={() => setLessonPhase('learn')}>
-              &larr; Back to Lesson
-            </Button>
-            <span className="text-sm text-gray-400 dark:text-gray-500">
-              {activeTopic.topic.name} &rsaquo; Mastery Quiz
-            </span>
-          </div>
-          <Card className="text-center py-12">
-            <Spinner className="h-8 w-8 mx-auto mb-4" />
-            <p className="text-gray-600 dark:text-gray-400 font-medium">Generating mastery quiz...</p>
-            <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">5 questions to check your understanding</p>
-          </Card>
-        </div>
-      );
-    }
-
-    // --- Phase: Quiz ---
-    if (lessonPhase === 'quiz' && quizQuestions.length > 0) {
-      const currentQ = quizQuestions[quizIndex];
-      const currentAnswer = quizAnswers[quizIndex];
-      const hasAnswered = currentAnswer !== undefined;
-
-      return (
-        <div className="max-w-3xl mx-auto px-4 py-8">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-              Mastery Quiz: {activeTopic.topic.name}
-            </span>
-          </div>
-
-          {/* Progress */}
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-              Question {quizIndex + 1} of {quizQuestions.length}
-            </span>
-            <div className="flex gap-1">
-              {quizQuestions.map((_, i) => (
-                <div
-                  key={i}
-                  className={`h-2 w-8 rounded-full transition-colors ${
-                    i === quizIndex
-                      ? 'bg-purple-600'
-                      : quizAnswers[i] !== undefined
-                        ? quizAnswers[i] === quizQuestions[i].correctIndex
-                          ? 'bg-green-500'
-                          : 'bg-red-500'
-                        : 'bg-gray-200 dark:bg-gray-700'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-
-          <Card className="mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">
-              <MathText text={currentQ.question} />
-            </h2>
-
-            <div className="space-y-3">
-              {currentQ.options.map((option, i) => {
-                const isCorrect = i === currentQ.correctIndex;
-                const isSelected = currentAnswer === i;
-
-                let cls = 'w-full text-left px-4 py-3 rounded-lg border-2 transition-all duration-200 font-medium text-sm ';
-                if (!hasAnswered) {
-                  cls += 'border-gray-200 dark:border-gray-600 hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 text-gray-700 dark:text-gray-300 cursor-pointer';
-                } else if (isCorrect) {
-                  cls += 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300';
-                } else if (isSelected && !isCorrect) {
-                  cls += 'border-red-500 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300';
-                } else {
-                  cls += 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500';
-                }
-
-                return (
-                  <button
-                    key={i}
-                    className={cls}
-                    onClick={() => { if (!hasAnswered) setQuizAnswers(prev => ({ ...prev, [quizIndex]: i })); }}
-                    disabled={hasAnswered}
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="flex-shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold border-current">
-                        {String.fromCharCode(65 + i)}
-                      </span>
-                      <MathText text={option} />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {hasAnswered && (
-              <div className={`mt-6 p-4 rounded-lg border ${
-                currentAnswer === currentQ.correctIndex
-                  ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                  : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-              }`}>
-                <p className={`text-sm font-semibold mb-1 ${
-                  currentAnswer === currentQ.correctIndex
-                    ? 'text-green-700 dark:text-green-300'
-                    : 'text-red-700 dark:text-red-300'
-                }`}>
-                  {currentAnswer === currentQ.correctIndex ? 'Correct!' : 'Incorrect'}
-                </p>
-                <p className={`text-sm ${
-                  currentAnswer === currentQ.correctIndex
-                    ? 'text-green-600 dark:text-green-400'
-                    : 'text-red-600 dark:text-red-400'
-                }`}>
-                  <MathText text={currentQ.explanation} />
-                </p>
-              </div>
-            )}
-          </Card>
-
-          {hasAnswered && (
-            <div className="flex justify-end">
-              <Button onClick={() => {
-                if (quizIndex < quizQuestions.length - 1) {
-                  setQuizIndex(prev => prev + 1);
-                } else {
-                  finishMasteryQuiz();
-                }
-              }}>
-                {quizIndex < quizQuestions.length - 1 ? 'Next Question' : 'See Results'}
-              </Button>
+          {output && <MarkdownRenderer content={output} />}
+          {lessonLoading && output && (
+            <div className="flex justify-center mt-4">
+              <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
             </div>
           )}
-        </div>
-      );
-    }
+        </Card>
 
-    // --- Phase: Result ---
-    if (lessonPhase === 'result') {
-      const { correct, total } = quizScore;
-      const passed = correct >= MASTERY_THRESHOLD;
+        {/* === Practice Problems (inline below lesson) === */}
+        <div ref={practiceRef}>
+          {problemsLoading && (
+            <Card className="text-center py-8 mb-4">
+              <Spinner className="h-6 w-6 mx-auto mb-3" />
+              <p className="text-sm text-gray-500 dark:text-gray-400">Generating practice problems...</p>
+            </Card>
+          )}
 
-      return (
-        <div className="max-w-3xl mx-auto px-4 py-8">
-          <Card className="text-center py-8">
-            <div className="text-5xl mb-3">{passed ? '\u2705' : '\u{1F4AA}'}</div>
-            <div className="text-4xl font-bold mb-1 text-gray-900 dark:text-gray-100">
-              {correct}/{total}
-            </div>
-            <p className={`text-lg font-semibold mb-2 ${passed ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
-              {passed ? 'Mastered!' : 'Not quite yet'}
-            </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-              {activeTopic.topic.name}
-            </p>
-            <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
-              {passed
-                ? 'You demonstrated mastery of this topic. It has been removed from your list.'
-                : `You need ${MASTERY_THRESHOLD}/${total} correct to master this topic. Review the lesson and try again.`}
-            </p>
-            <div className="flex gap-3 justify-center">
-              {passed ? (
-                <>
-                  <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
-                    Back to Topics
-                  </Button>
-                  {unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id).length > 0 && (
-                    <Button onClick={goToNextTopic}>
-                      Next Topic
-                    </Button>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
-                    Back to Topics
-                  </Button>
-                  <Button onClick={retryLesson}>
-                    Review Lesson & Retry
-                  </Button>
-                </>
+          {problems.length > 0 && (
+            <>
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">Practice Problems</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Check your answers below. You need {MASTERY_POINTS}/{TOTAL_POINTS} points to master this topic.
+                  <span className="ml-1 text-xs">(Easy = {DIFFICULTY_POINTS.easy}pt, Medium = {DIFFICULTY_POINTS.medium}pts, Hard = {DIFFICULTY_POINTS.hard}pts)</span>
+                </p>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                {problems.map((problem, pIdx) => {
+                  const isChecked = checkedProblems[pIdx] !== undefined;
+                  const selectedOption = checkedProblems[pIdx];
+                  const isCorrect = isChecked && selectedOption === problem.correctIndex;
+                  const pts = DIFFICULTY_POINTS[problem.difficulty] || 1;
+
+                  const diffColor = problem.difficulty === 'easy'
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                    : problem.difficulty === 'medium'
+                    ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                    : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300';
+
+                  return (
+                    <Card key={pIdx} className={isChecked ? (isCorrect ? '!border-green-300 dark:!border-green-700' : '!border-red-300 dark:!border-red-700') : ''}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                          Problem {pIdx + 1}
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${diffColor}`}>
+                          {problem.difficulty} ({pts}pt{pts > 1 ? 's' : ''})
+                        </span>
+                        {isChecked && (
+                          <span className={`text-xs font-semibold ${isCorrect ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {isCorrect ? `+${pts}` : '+0'}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-4">
+                        <MathText text={problem.question} />
+                      </p>
+
+                      <div className="space-y-2">
+                        {problem.options.map((option, oIdx) => {
+                          const optIsCorrect = oIdx === problem.correctIndex;
+                          const optIsSelected = selectedOption === oIdx;
+
+                          let cls = 'w-full text-left px-3 py-2.5 rounded-lg border-2 transition-all duration-200 text-sm ';
+                          if (!isChecked) {
+                            cls += 'border-gray-200 dark:border-gray-600 hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 text-gray-700 dark:text-gray-300 cursor-pointer';
+                          } else if (optIsCorrect) {
+                            cls += 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300';
+                          } else if (optIsSelected && !optIsCorrect) {
+                            cls += 'border-red-500 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300';
+                          } else {
+                            cls += 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500';
+                          }
+
+                          return (
+                            <button
+                              key={oIdx}
+                              className={cls}
+                              onClick={() => checkAnswer(pIdx, oIdx)}
+                              disabled={isChecked}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className="flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold border-current">
+                                  {String.fromCharCode(65 + oIdx)}
+                                </span>
+                                <MathText text={option} />
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Step-by-step solution shown after checking */}
+                      {isChecked && (
+                        <div className={`mt-4 p-4 rounded-lg border ${
+                          isCorrect
+                            ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                        }`}>
+                          <p className={`text-sm font-semibold mb-2 ${
+                            isCorrect ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
+                          }`}>
+                            {isCorrect ? 'Correct!' : 'Incorrect — here\'s how to solve it:'}
+                          </p>
+                          <div className={`text-sm ${
+                            isCorrect ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                          }`}>
+                            <MarkdownRenderer content={problem.solution} />
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {/* === Mastery Result (appears after all checked) === */}
+              {allChecked && scoreInfo && (
+                <Card className={`text-center py-6 mb-4 ${
+                  scoreInfo.mastered
+                    ? '!border-green-300 dark:!border-green-700 bg-green-50 dark:bg-green-900/10'
+                    : '!border-amber-300 dark:!border-amber-700 bg-amber-50 dark:bg-amber-900/10'
+                }`}>
+                  <div className="text-4xl mb-2">{scoreInfo.mastered ? '\u2705' : '\u{1F4AA}'}</div>
+                  <div className="text-3xl font-bold mb-1 text-gray-900 dark:text-gray-100">
+                    {scoreInfo.earned}/{scoreInfo.total} points
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                    {scoreInfo.correct}/{scoreInfo.outOf} correct
+                  </p>
+                  <p className={`text-lg font-semibold mb-3 ${
+                    scoreInfo.mastered ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'
+                  }`}>
+                    {scoreInfo.mastered ? 'Topic Mastered!' : 'Not quite — review and try again'}
+                  </p>
+                  <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">
+                    {scoreInfo.mastered
+                      ? 'This topic has been removed from your list.'
+                      : `You needed ${MASTERY_POINTS}/${TOTAL_POINTS} points. The harder problems are worth more because they prove deeper understanding.`}
+                  </p>
+                  <div className="flex gap-3 justify-center">
+                    {scoreInfo.mastered ? (
+                      <>
+                        <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
+                          Back to Topics
+                        </Button>
+                        {unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id).length > 0 && (
+                          <Button onClick={goToNextTopic}>
+                            Next Topic
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
+                          Back to Topics
+                        </Button>
+                        <Button onClick={retryLesson}>
+                          Review Lesson & Retry
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </Card>
               )}
-            </div>
-          </Card>
+            </>
+          )}
         </div>
-      );
-    }
+      </div>
+    );
   }
 
   // ==================== TOPIC OVERVIEW ====================
