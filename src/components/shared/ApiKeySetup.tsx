@@ -86,7 +86,7 @@ export function ApiKeySetup({ onDone }: ApiKeySetupProps) {
         </p>
       </div>
       <Input
-        type="password"
+        type="text"
         placeholder="Paste your Gemini API key here"
         value={value}
         onChange={(e) => setValue(e.target.value)}

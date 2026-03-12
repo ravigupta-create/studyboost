@@ -127,17 +127,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 p-6">
           <form onSubmit={handleSubmit}>
             <label htmlFor="auth-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Password
+              Access Code
             </label>
             <input
               id="auth-password"
-              type="password"
+              type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={isLocked}
               autoFocus
               autoComplete="off"
-              placeholder={isLocked ? 'Locked' : 'Enter password'}
+              spellCheck={false}
+              placeholder={isLocked ? 'Locked' : 'Enter access code'}
               className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             />
             {error && (
