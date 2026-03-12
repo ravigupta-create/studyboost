@@ -5,8 +5,11 @@ import { useSearchParams } from 'next/navigation';
 import { useApiKey } from '@/hooks/useApiKey';
 import { useAssessment } from '@/hooks/useAssessment';
 import { useGeminiStream } from '@/hooks/useGemini';
-import { lessonPrompt } from '@/lib/prompts';
+import { useToast } from '@/hooks/useToast';
+import { callGeminiJSON } from '@/lib/gemini';
+import { lessonPrompt, masteryQuizPrompt } from '@/lib/prompts';
 import { COURSES, type Course, type Topic, type Unit } from '@/lib/curriculum';
+import { QuizQuestion } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
@@ -14,28 +17,37 @@ import { Spinner } from '@/components/ui/Spinner';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { ApiKeySetup } from '@/components/shared/ApiKeySetup';
 import { MarkdownRenderer } from '@/components/shared/MarkdownRenderer';
+import { MathText } from '@/components/shared/MathText';
 
 const IDK = -1;
+const MASTERY_THRESHOLD = 4; // out of 5
+
+type LessonPhase = 'learn' | 'quiz-loading' | 'quiz' | 'result';
 
 export default function LessonsPage() {
-  const { hasKey } = useApiKey();
+  const { hasKey, apiKey } = useApiKey();
   const searchParams = useSearchParams();
   const { results, lessonProgress, markLessonComplete, markLessonViewed } = useAssessment();
-  const { output, loading, generate, stop } = useGeminiStream();
+  const { output, loading: lessonLoading, generate, stop } = useGeminiStream();
+  const { addToast } = useToast();
 
   const [selectedCourseId, setSelectedCourseId] = useState(searchParams.get('course') || COURSES[0].id);
   const [activeTopic, setActiveTopic] = useState<{ course: Course; unit: Unit; topic: Topic } | null>(null);
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
 
+  // Mastery quiz state
+  const [lessonPhase, setLessonPhase] = useState<LessonPhase>('learn');
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
+
   const selectedCourse = useMemo(() => COURSES.find(c => c.id === selectedCourseId) || COURSES[0], [selectedCourseId]);
 
-  // Get latest assessment result for selected course
   const latestResult = useMemo(() => {
     const courseResults = results.filter(r => r.courseId === selectedCourseId);
     return courseResults.length > 0 ? courseResults[courseResults.length - 1] : null;
   }, [results, selectedCourseId]);
 
-  // Map unit scores from assessment
   const unitScoreMap = useMemo(() => {
     const map: Record<string, number> = {};
     if (latestResult) {
@@ -44,7 +56,6 @@ export default function LessonsPage() {
     return map;
   }, [latestResult]);
 
-  // Which units had "I don't know" answers
   const unitSkipMap = useMemo(() => {
     const map: Record<string, boolean> = {};
     if (latestResult) {
@@ -57,33 +68,27 @@ export default function LessonsPage() {
     return map;
   }, [latestResult]);
 
-  // Lesson completion map
   const completionMap = useMemo(() => {
     const map: Record<string, boolean> = {};
     lessonProgress.forEach(lp => { map[lp.topicId] = lp.completed; });
     return map;
   }, [lessonProgress]);
 
-  // Filter units: only show ones that still have unmastered topics
-  // A unit disappears entirely once all its topics are marked mastered
   const filteredUnits = useMemo(() => {
     const unitsFromAssessment = !latestResult ? selectedCourse.units : selectedCourse.units.filter(unit => {
       const score = unitScoreMap[unit.id];
       const hadSkips = unitSkipMap[unit.id];
       return score === undefined || score < 100 || hadSkips;
     });
-    // Further filter: hide units where every topic is mastered via lessons
     return unitsFromAssessment.filter(unit =>
       unit.topics.some(topic => !completionMap[topic.id])
     );
   }, [selectedCourse, latestResult, unitScoreMap, unitSkipMap, completionMap]);
 
-  // Count mastered units (assessment-mastered + lesson-mastered)
   const masteredUnitCount = useMemo(() => {
     return selectedCourse.units.length - filteredUnits.length;
   }, [selectedCourse, filteredUnits]);
 
-  // Total mastered topics via lessons
   const masteredTopicCount = useMemo(() => {
     return selectedCourse.units.reduce((sum, unit) =>
       sum + unit.topics.filter(t => completionMap[t.id]).length, 0
@@ -99,7 +104,6 @@ export default function LessonsPage() {
     });
   }, []);
 
-  // Build flat list of unmastered topics only for prev/next navigation
   const unmasteredTopics = useMemo(() => {
     return filteredUnits.flatMap(unit =>
       unit.topics
@@ -108,33 +112,109 @@ export default function LessonsPage() {
     );
   }, [filteredUnits, selectedCourse, completionMap]);
 
-  const activeTopicIndex = useMemo(() => {
-    if (!activeTopic) return -1;
-    return unmasteredTopics.findIndex(t => t.topic.id === activeTopic.topic.id);
-  }, [activeTopic, unmasteredTopics]);
-
   const startLesson = useCallback((course: Course, unit: Unit, topic: Topic) => {
     stop();
     setActiveTopic({ course, unit, topic });
+    setLessonPhase('learn');
+    setQuizQuestions([]);
+    setQuizIndex(0);
+    setQuizAnswers({});
     markLessonViewed(topic.id);
     generate(lessonPrompt(course.name, unit.name, topic.name, topic.description));
   }, [generate, stop, markLessonViewed]);
 
-  const handlePrev = useCallback(() => {
-    if (activeTopicIndex > 0) {
-      const prev = unmasteredTopics[activeTopicIndex - 1];
-      startLesson(prev.course, prev.unit, prev.topic);
+  // Start the mastery quiz after reading the lesson
+  const startMasteryQuiz = useCallback(async () => {
+    if (!activeTopic || !apiKey) return;
+    setLessonPhase('quiz-loading');
+    try {
+      const questions = await callGeminiJSON<QuizQuestion[]>(
+        apiKey,
+        masteryQuizPrompt(
+          activeTopic.course.name,
+          activeTopic.unit.name,
+          activeTopic.topic.name,
+          activeTopic.topic.description,
+        )
+      );
+      if (!Array.isArray(questions) || questions.length === 0) {
+        throw new Error('No questions generated.');
+      }
+      setQuizQuestions(questions);
+      setQuizIndex(0);
+      setQuizAnswers({});
+      setLessonPhase('quiz');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate quiz.';
+      addToast(msg, 'error');
+      setLessonPhase('learn');
     }
-  }, [activeTopicIndex, unmasteredTopics, startLesson]);
+  }, [activeTopic, apiKey, addToast]);
 
-  const handleNext = useCallback(() => {
-    if (activeTopicIndex < unmasteredTopics.length - 1) {
-      const next = unmasteredTopics[activeTopicIndex + 1];
-      startLesson(next.course, next.unit, next.topic);
+  // Quiz score
+  const quizScore = useMemo(() => {
+    if (quizQuestions.length === 0) return { correct: 0, total: 0 };
+    let correct = 0;
+    quizQuestions.forEach((q, i) => {
+      if (quizAnswers[i] === q.correctIndex) correct++;
+    });
+    return { correct, total: quizQuestions.length };
+  }, [quizQuestions, quizAnswers]);
+
+  const isMastered = quizScore.correct >= MASTERY_THRESHOLD;
+
+  // Finish quiz: auto-determine mastery
+  const finishMasteryQuiz = useCallback(() => {
+    setLessonPhase('result');
+    if (isMastered && activeTopic) {
+      markLessonComplete(activeTopic.topic.id);
     }
-  }, [activeTopicIndex, unmasteredTopics, startLesson]);
+  }, [isMastered, activeTopic, markLessonComplete]);
 
-  // Auto-expand units that need work
+  // After mastery result, go to next topic
+  const goToNextTopic = useCallback(() => {
+    if (!activeTopic) return;
+    const remaining = unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id);
+    if (remaining.length === 0) {
+      stop();
+      setActiveTopic(null);
+    } else {
+      const currentIdx = unmasteredTopics.findIndex(t => t.topic.id === activeTopic.topic.id);
+      const nextIdx = Math.min(currentIdx, remaining.length - 1);
+      startLesson(remaining[nextIdx].course, remaining[nextIdx].unit, remaining[nextIdx].topic);
+    }
+  }, [activeTopic, unmasteredTopics, stop, startLesson]);
+
+  // Retry: go back to lesson
+  const retryLesson = useCallback(() => {
+    if (!activeTopic) return;
+    startLesson(activeTopic.course, activeTopic.unit, activeTopic.topic);
+  }, [activeTopic, startLesson]);
+
+  // Keyboard support for quiz
+  useEffect(() => {
+    if (lessonPhase !== 'quiz' || quizQuestions.length === 0) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const hasAnswered = quizAnswers[quizIndex] !== undefined;
+      if (!hasAnswered && e.key >= '1' && e.key <= '4') {
+        const idx = parseInt(e.key) - 1;
+        if (idx < (quizQuestions[quizIndex]?.options?.length ?? 0)) {
+          setQuizAnswers(prev => ({ ...prev, [quizIndex]: idx }));
+        }
+      }
+      if (e.key === 'Enter' && hasAnswered) {
+        if (quizIndex < quizQuestions.length - 1) {
+          setQuizIndex(prev => prev + 1);
+        } else {
+          finishMasteryQuiz();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // Auto-expand units
   useEffect(() => {
     if (latestResult) {
       const needsWork = new Set<string>();
@@ -152,84 +232,238 @@ export default function LessonsPage() {
     );
   }
 
-  const handleMarkMastered = useCallback(() => {
-    if (!activeTopic) return;
-    markLessonComplete(activeTopic.topic.id);
-    // After marking complete, the unmasteredTopics list will update.
-    // Navigate to next unmastered topic, or back to list if none left.
-    // We need to look at what the next topic will be after this one is removed.
-    const currentIdx = unmasteredTopics.findIndex(t => t.topic.id === activeTopic.topic.id);
-    const remaining = unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id);
-    if (remaining.length === 0) {
-      stop();
-      setActiveTopic(null);
-    } else {
-      // Pick the next one (or the last if we were at the end)
-      const nextIdx = Math.min(currentIdx, remaining.length - 1);
-      const next = remaining[nextIdx];
-      startLesson(next.course, next.unit, next.topic);
-    }
-  }, [activeTopic, markLessonComplete, unmasteredTopics, stop, startLesson]);
-
-  // Lesson View
+  // ==================== LESSON VIEW ====================
   if (activeTopic) {
-    const isComplete = completionMap[activeTopic.topic.id];
-    const navCount = unmasteredTopics.length;
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => { stop(); setActiveTopic(null); }}>
-            &larr; Back to Topics
-          </Button>
-          <span className="text-sm text-gray-400 dark:text-gray-500">
-            {activeTopic.unit.name} &rsaquo; {activeTopic.topic.name}
-          </span>
+    // --- Phase: Learning ---
+    if (lessonPhase === 'learn') {
+      return (
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Button variant="ghost" size="sm" onClick={() => { stop(); setActiveTopic(null); }}>
+              &larr; Back to Topics
+            </Button>
+            <span className="text-sm text-gray-400 dark:text-gray-500">
+              {activeTopic.unit.name} &rsaquo; {activeTopic.topic.name}
+            </span>
+          </div>
+
+          <Card className="mb-4">
+            {lessonLoading && !output && (
+              <div className="text-center py-12">
+                <Spinner className="h-8 w-8 mx-auto mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
+              </div>
+            )}
+            {output && <MarkdownRenderer content={output} />}
+            {lessonLoading && output && (
+              <div className="flex justify-center mt-4">
+                <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
+              </div>
+            )}
+          </Card>
+
+          {!lessonLoading && output && (
+            <div className="flex justify-end">
+              <Button onClick={startMasteryQuiz}>
+                Ready — Take Mastery Quiz
+              </Button>
+            </div>
+          )}
         </div>
+      );
+    }
 
-        <Card className="mb-4">
-          {loading && !output && (
-            <div className="text-center py-12">
-              <Spinner className="h-8 w-8 mx-auto mb-4" />
-              <p className="text-gray-500 dark:text-gray-400">Generating lesson...</p>
+    // --- Phase: Quiz Loading ---
+    if (lessonPhase === 'quiz-loading') {
+      return (
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Button variant="ghost" size="sm" onClick={() => setLessonPhase('learn')}>
+              &larr; Back to Lesson
+            </Button>
+            <span className="text-sm text-gray-400 dark:text-gray-500">
+              {activeTopic.topic.name} &rsaquo; Mastery Quiz
+            </span>
+          </div>
+          <Card className="text-center py-12">
+            <Spinner className="h-8 w-8 mx-auto mb-4" />
+            <p className="text-gray-600 dark:text-gray-400 font-medium">Generating mastery quiz...</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">5 questions to check your understanding</p>
+          </Card>
+        </div>
+      );
+    }
+
+    // --- Phase: Quiz ---
+    if (lessonPhase === 'quiz' && quizQuestions.length > 0) {
+      const currentQ = quizQuestions[quizIndex];
+      const currentAnswer = quizAnswers[quizIndex];
+      const hasAnswered = currentAnswer !== undefined;
+
+      return (
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-sm font-semibold text-purple-600 dark:text-purple-400">
+              Mastery Quiz: {activeTopic.topic.name}
+            </span>
+          </div>
+
+          {/* Progress */}
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+              Question {quizIndex + 1} of {quizQuestions.length}
+            </span>
+            <div className="flex gap-1">
+              {quizQuestions.map((_, i) => (
+                <div
+                  key={i}
+                  className={`h-2 w-8 rounded-full transition-colors ${
+                    i === quizIndex
+                      ? 'bg-purple-600'
+                      : quizAnswers[i] !== undefined
+                        ? quizAnswers[i] === quizQuestions[i].correctIndex
+                          ? 'bg-green-500'
+                          : 'bg-red-500'
+                        : 'bg-gray-200 dark:bg-gray-700'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
+          <Card className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">
+              <MathText text={currentQ.question} />
+            </h2>
+
+            <div className="space-y-3">
+              {currentQ.options.map((option, i) => {
+                const isCorrect = i === currentQ.correctIndex;
+                const isSelected = currentAnswer === i;
+
+                let cls = 'w-full text-left px-4 py-3 rounded-lg border-2 transition-all duration-200 font-medium text-sm ';
+                if (!hasAnswered) {
+                  cls += 'border-gray-200 dark:border-gray-600 hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 text-gray-700 dark:text-gray-300 cursor-pointer';
+                } else if (isCorrect) {
+                  cls += 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300';
+                } else if (isSelected && !isCorrect) {
+                  cls += 'border-red-500 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300';
+                } else {
+                  cls += 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500';
+                }
+
+                return (
+                  <button
+                    key={i}
+                    className={cls}
+                    onClick={() => { if (!hasAnswered) setQuizAnswers(prev => ({ ...prev, [quizIndex]: i })); }}
+                    disabled={hasAnswered}
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="flex-shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold border-current">
+                        {String.fromCharCode(65 + i)}
+                      </span>
+                      <MathText text={option} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {hasAnswered && (
+              <div className={`mt-6 p-4 rounded-lg border ${
+                currentAnswer === currentQ.correctIndex
+                  ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+              }`}>
+                <p className={`text-sm font-semibold mb-1 ${
+                  currentAnswer === currentQ.correctIndex
+                    ? 'text-green-700 dark:text-green-300'
+                    : 'text-red-700 dark:text-red-300'
+                }`}>
+                  {currentAnswer === currentQ.correctIndex ? 'Correct!' : 'Incorrect'}
+                </p>
+                <p className={`text-sm ${
+                  currentAnswer === currentQ.correctIndex
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}>
+                  <MathText text={currentQ.explanation} />
+                </p>
+              </div>
+            )}
+          </Card>
+
+          {hasAnswered && (
+            <div className="flex justify-end">
+              <Button onClick={() => {
+                if (quizIndex < quizQuestions.length - 1) {
+                  setQuizIndex(prev => prev + 1);
+                } else {
+                  finishMasteryQuiz();
+                }
+              }}>
+                {quizIndex < quizQuestions.length - 1 ? 'Next Question' : 'See Results'}
+              </Button>
             </div>
           )}
-          {output && <MarkdownRenderer content={output} />}
-          {loading && output && (
-            <div className="flex justify-center mt-4">
-              <Button variant="secondary" size="sm" onClick={stop}>Stop Generating</Button>
-            </div>
-          )}
-        </Card>
+        </div>
+      );
+    }
 
-        {!loading && output && (
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              {activeTopicIndex >= 0 && (
+    // --- Phase: Result ---
+    if (lessonPhase === 'result') {
+      const { correct, total } = quizScore;
+      const passed = correct >= MASTERY_THRESHOLD;
+
+      return (
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <Card className="text-center py-8">
+            <div className="text-5xl mb-3">{passed ? '\u2705' : '\u{1F4AA}'}</div>
+            <div className="text-4xl font-bold mb-1 text-gray-900 dark:text-gray-100">
+              {correct}/{total}
+            </div>
+            <p className={`text-lg font-semibold mb-2 ${passed ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+              {passed ? 'Mastered!' : 'Not quite yet'}
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+              {activeTopic.topic.name}
+            </p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
+              {passed
+                ? 'You demonstrated mastery of this topic. It has been removed from your list.'
+                : `You need ${MASTERY_THRESHOLD}/${total} correct to master this topic. Review the lesson and try again.`}
+            </p>
+            <div className="flex gap-3 justify-center">
+              {passed ? (
                 <>
-                  <Button variant="secondary" size="sm" disabled={activeTopicIndex <= 0} onClick={handlePrev}>
-                    &larr; Previous
+                  <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
+                    Back to Topics
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={activeTopicIndex >= navCount - 1} onClick={handleNext}>
-                    Next &rarr;
+                  {unmasteredTopics.filter(t => t.topic.id !== activeTopic.topic.id).length > 0 && (
+                    <Button onClick={goToNextTopic}>
+                      Next Topic
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={() => { stop(); setActiveTopic(null); }}>
+                    Back to Topics
+                  </Button>
+                  <Button onClick={retryLesson}>
+                    Review Lesson & Retry
                   </Button>
                 </>
               )}
             </div>
-            <Button
-              size="sm"
-              onClick={handleMarkMastered}
-              disabled={isComplete}
-              variant={isComplete ? 'secondary' : 'primary'}
-            >
-              {isComplete ? 'Mastered' : 'Mark as Mastered'}
-            </Button>
-          </div>
-        )}
-      </div>
-    );
+          </Card>
+        </div>
+      );
+    }
   }
 
-  // Topic Overview
+  // ==================== TOPIC OVERVIEW ====================
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <PageHeader icon="&#x1F4D6;" title="Lessons" description="Only showing topics you need to learn. Mastered topics are hidden." aiPowered />
@@ -254,7 +488,6 @@ export default function LessonsPage() {
 
       {latestResult && (
         <>
-          {/* Summary bar */}
           <Card className="mb-6">
             <div className="flex items-center justify-between">
               <div>

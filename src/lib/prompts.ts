@@ -154,13 +154,13 @@ Generate exactly ${units.length * 2} questions (2 per unit). Each must have exac
 }
 
 export function lessonPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
-  return `You are an expert math tutor. A student assessed themselves on ${courseName} and does NOT yet know this topic. Your job is to teach them to mastery as efficiently as possible.
+  return `You are an expert math tutor. A student assessed themselves on ${courseName} and does NOT yet know this topic. Teach them to mastery as efficiently as possible.
 
 Topic: ${topicName}
 Unit: ${unitName}
 What they need to learn: ${description}
 
-Use markdown formatting. Use LaTeX with $ for inline math and $$ for display math. Be direct — no filler. Teach like the best tutor: clear, concise, build understanding fast.
+Use markdown formatting. Use LaTeX with $ for inline math and $$ for display math. Be direct — no filler.
 
 ## ${topicName}
 
@@ -173,50 +173,40 @@ Teach the essential concepts. For each concept:
 - Show ONE clean example immediately after
 - If there's a common mistake, warn about it (> **Watch out:** ...)
 
-Keep explanations tight. Students learn by doing, not reading.
-
 ### Worked Examples
-2 worked examples, increasing difficulty. Show every step with reasoning. These should be honors-level problems that actually test understanding.
-
-### Your Turn — Practice
-Exactly 3 problems (easy → medium → hard). The student should be able to solve these if they understood the lesson.
-
-Format each as:
-
-**Problem 1** (Easy):
-[problem]
-
-<details>
-<summary>Solution</summary>
-
-[step-by-step solution]
-
-</details>
-
-**Problem 2** (Medium):
-[problem]
-
-<details>
-<summary>Solution</summary>
-
-[step-by-step solution]
-
-</details>
-
-**Problem 3** (Hard):
-[problem]
-
-<details>
-<summary>Solution</summary>
-
-[step-by-step solution]
-
-</details>
+3 worked examples, increasing difficulty. Show every step with reasoning. These should be honors-level.
 
 ### Quick Reference
-Bullet-point cheat sheet of the key formulas/rules from this topic. Nothing else.
+Bullet-point cheat sheet of the key formulas/rules from this topic.
 
-Do NOT pad the lesson. Every sentence should teach something. The goal is mastery in minimum time.`;
+Do NOT include practice problems — those are handled separately. Every sentence should teach something.`;
+}
+
+export function masteryQuizPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
+  return `You are creating a mastery check quiz for an honors high school math student who just learned this topic.
+
+Course: ${courseName}
+Unit: ${unitName}
+Topic: ${topicName}
+What was taught: ${description}
+
+Generate exactly 5 multiple-choice questions that test whether the student truly understood the topic. Questions should:
+- Range from straightforward application (Q1-2) to deeper understanding (Q3-4) to challenging honors-level (Q5)
+- Use LaTeX notation with $ delimiters for all math
+- Have plausible wrong answers (common mistakes as distractors)
+- Include a clear step-by-step explanation for the correct answer
+
+Return a JSON array:
+[
+  {
+    "question": "question text with $LaTeX$",
+    "options": ["$option A$", "$option B$", "$option C$", "$option D$"],
+    "correctIndex": 0,
+    "explanation": "Step-by-step explanation showing how to solve it"
+  }
+]
+
+Generate exactly 5 questions. Each must have exactly 4 options. correctIndex is 0-based.`;
 }
 
 export function translatePrompt(text: string, targetLang: string): string {
