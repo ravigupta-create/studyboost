@@ -61,7 +61,10 @@ export default function AssessmentPage() {
   }, [clearPausedAssessment]);
 
   const handleSelectCourse = useCallback(async (course: Course) => {
-    if (!apiKey) return;
+    if (!apiKey) {
+      addToast('Please add your Gemini API key above to start an assessment.', 'error');
+      return;
+    }
     setSelectedCourse(course);
     setPhase('loading');
     setQuestions([]);
@@ -235,20 +238,17 @@ export default function AssessmentPage() {
     }
   }, [phase, finishQuiz]);
 
-  if (!hasKey) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <PageHeader icon="&#x1F4CA;" title="Assessment Mode" description="Diagnostic math assessment with personalized AI lessons." aiPowered />
-        <Card><ApiKeySetup /></Card>
-      </div>
-    );
-  }
-
   // Phase 1: Course Selection
   if (phase === 'select') {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <PageHeader icon="&#x1F4CA;" title="Assessment Mode" description="Choose your course, take a diagnostic assessment, and get personalized lessons." aiPowered />
+
+        {!hasKey && (
+          <Card className="mb-6">
+            <ApiKeySetup />
+          </Card>
+        )}
 
         {/* Resume paused assessment banner */}
         {pausedData && (() => {

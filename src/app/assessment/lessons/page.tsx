@@ -115,6 +115,10 @@ export default function LessonsPage() {
 
   // Start lesson: teaching + practice generate in parallel
   const startLesson = useCallback(async (course: Course, unit: Unit, topic: Topic) => {
+    if (!apiKey) {
+      addToast('Please add your Gemini API key above to start a lesson.', 'error');
+      return;
+    }
     stop();
     setActiveTopic({ course, unit, topic });
     setProblems([]);
@@ -128,10 +132,14 @@ export default function LessonsPage() {
 
     generate(lessonPrompt(course.name, unit.name, topic.name, topic.description));
     generateProblems(course, unit, topic);
-  }, [generate, stop, markLessonViewed, generateProblems]);
+  }, [generate, stop, markLessonViewed, generateProblems, apiKey, addToast]);
 
   // Skip straight to practice (for students who know the concept but got assessment wrong)
   const startPracticeOnly = useCallback(async (course: Course, unit: Unit, topic: Topic) => {
+    if (!apiKey) {
+      addToast('Please add your Gemini API key above to start practice.', 'error');
+      return;
+    }
     stop();
     setActiveTopic({ course, unit, topic });
     setProblems([]);
@@ -144,7 +152,7 @@ export default function LessonsPage() {
     markLessonViewed(topic.id);
 
     generateProblems(course, unit, topic);
-  }, [stop, markLessonViewed, generateProblems]);
+  }, [stop, markLessonViewed, generateProblems, apiKey, addToast]);
 
   // Check answer for a problem
   const checkAnswer = useCallback((idx: number, option: number) => {
@@ -246,15 +254,6 @@ export default function LessonsPage() {
       if (s.size > 0) setExpandedUnits(s);
     }
   }, [latestResult, filteredUnits]);
-
-  if (!hasKey) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <PageHeader icon="&#x1F4D6;" title="Lessons" description="AI-generated lessons for topics you need to master." aiPowered />
-        <Card><ApiKeySetup /></Card>
-      </div>
-    );
-  }
 
   // ==================== LESSON VIEW ====================
   if (activeTopic) {
@@ -437,6 +436,12 @@ export default function LessonsPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <PageHeader icon="&#x1F4D6;" title="Lessons" description="Only showing topics you need to learn. Mastered topics are hidden." aiPowered />
+
+      {!hasKey && (
+        <Card className="mb-6">
+          <ApiKeySetup />
+        </Card>
+      )}
 
       <div className="mb-6">
         <Select value={selectedCourseId} onChange={e => { setSelectedCourseId(e.target.value); setExpandedUnits(new Set()); }}>
