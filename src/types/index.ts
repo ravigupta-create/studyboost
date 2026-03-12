@@ -107,3 +107,34 @@ export interface PracticeProblem {
   solution: string;
   difficulty: 'easy' | 'medium' | 'hard';
 }
+
+export interface AssessmentQuestion {
+  unitId: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface UnitScore {
+  unitId: string;
+  unitName: string;
+  correct: number;
+  total: number;
+  percentage: number;
+}
+
+export interface AssessmentResult {
+  courseId: string;
+  date: string;
+  unitScores: UnitScore[];
+  overallPercentage: number;
+  questions: AssessmentQuestion[];
+  answers: Record<number, number>;
+}
+
+export interface LessonProgress {
+  topicId: string;
+  completed: boolean;
+  lastViewed: string;
+}

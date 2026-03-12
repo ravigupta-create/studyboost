@@ -2,6 +2,15 @@ import { Feature } from '@/types';
 
 export const FEATURES: Feature[] = [
   {
+    id: 'assessment',
+    name: 'Assessment Mode',
+    description: 'Diagnostic math assessment with personalized AI lessons for Math 1/2/3 Honors.',
+    href: '/assessment',
+    icon: '📊',
+    aiPowered: true,
+    color: 'from-blue-600 to-purple-600',
+  },
+  {
     id: 'homework',
     name: 'Homework Explainer',
     description: 'Paste any homework question and get a clear, step-by-step explanation.',
