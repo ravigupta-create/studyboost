@@ -154,61 +154,76 @@ Generate exactly ${units.length * 2} questions (2 per unit). Each must have exac
 }
 
 export function lessonPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
-  return `You are an expert math tutor. A student assessed themselves on ${courseName} and does NOT yet know this topic. Teach them to mastery as efficiently as possible.
+  return `You are an expert math tutor teaching a student who assessed themselves on ${courseName} and does NOT yet know this topic. Your goal: get them from zero to mastery in the shortest possible reading time.
 
 Topic: ${topicName}
 Unit: ${unitName}
 What they need to learn: ${description}
 
-Use markdown formatting. Use LaTeX with $ for inline math and $$ for display math. Be direct — no filler.
+TEACHING RULES — follow these strictly:
+- Use LaTeX: $ for inline, $$ for display math
+- Every sentence must teach. Zero filler, zero motivation speeches, zero "let's explore"
+- Teach the MINIMUM needed to solve problems correctly — not a textbook chapter
+- Use the "example sandwich": rule → worked example → rule restated with nuance
+- Bold key terms on first use only
+- If a concept has a shortcut or pattern, teach the pattern, not just the formal definition
 
 ## ${topicName}
 
-### Why This Matters
-One sentence connecting this topic to the bigger picture.
+> **Big picture:** One sentence — why this matters and where it connects in ${unitName}.
 
-### Core Ideas
-Teach the essential concepts. For each concept:
-- State the rule/definition clearly in a callout (> **Key Idea:** ...)
-- Show ONE clean example immediately after
-- If there's a common mistake, warn about it (> **Watch out:** ...)
+### The Ideas
+
+For each concept (use as few as needed — combine related ideas):
+1. State the rule/formula in a callout: > **Key Idea:** ...
+2. Immediately show ONE clean worked example applying it (every algebraic step shown)
+3. If students commonly mess this up: > ⚠️ **Common trap:** ... (with the wrong vs right approach)
+
+Merge related concepts — don't split what can be taught together. If the topic has 1 core idea, teach 1. If it has 3, teach 3. Don't pad.
 
 ### Worked Examples
-3 worked examples, increasing difficulty. Show every step with reasoning. These should be honors-level.
 
-### Quick Reference
-Bullet-point cheat sheet of the key formulas/rules from this topic.
+2-3 worked examples, progressing from straightforward to honors-level. For each:
+- State the problem
+- Show EVERY step with brief reasoning (student should be able to follow without guessing)
+- Box or bold the final answer
 
-Do NOT include practice problems — those are handled separately. Every sentence should teach something.`;
+### Cheat Sheet
+
+Bullet-point reference card: just the formulas/rules, no explanations. This is what they'd write on a notecard.
+
+Do NOT include practice problems — those come separately. Do NOT include introductions, conclusions, or summaries. Start teaching immediately.`;
 }
 
 export function practiceProblemsPrompt(courseName: string, unitName: string, topicName: string, description: string): string {
-  return `You are creating practice problems for an honors high school math student who just learned this topic. These problems will determine whether they have mastered the material.
+  return `Generate 5 multiple-choice problems to test whether an honors ${courseName} student has mastered this topic.
 
-Course: ${courseName}
-Unit: ${unitName}
-Topic: ${topicName}
+Topic: ${topicName} (${unitName})
 What was taught: ${description}
 
-Generate exactly 5 multiple-choice problems with increasing difficulty. The difficulty distribution MUST be:
-- Problems 1-2: "easy" — direct application of a single concept
-- Problems 3-4: "medium" — requires combining concepts or multi-step reasoning
-- Problem 5: "hard" — honors-level challenge, requires deep understanding
+PROBLEM DESIGN RULES:
+- Each problem must test a DIFFERENT aspect or application of the topic — no two problems should test the same skill
+- Wrong answers (distractors) must be answers a student would get by making a specific common mistake (sign error, forgetting a step, applying wrong rule). Never use random numbers as distractors
+- The solution must teach: show every step, explain WHY each step works, and name the mistake that leads to each wrong answer
+- Use LaTeX with $ delimiters for all math
 
-Use LaTeX notation with $ delimiters for all math. Wrong answers should be plausible (common student mistakes as distractors). The step-by-step solution should teach the student HOW to solve it if they got it wrong.
+DIFFICULTY (strict):
+- Problems 1-2: "easy" — direct, single-step application of one concept
+- Problems 3-4: "medium" — multi-step OR combines two concepts from the topic
+- Problem 5: "hard" — requires creative application, edge cases, or connecting to prior knowledge. Honors-level
 
 Return a JSON array:
 [
   {
     "question": "problem text with $LaTeX$",
-    "options": ["$option A$", "$option B$", "$option C$", "$option D$"],
+    "options": ["$A$", "$B$", "$C$", "$D$"],
     "correctIndex": 0,
     "difficulty": "easy",
-    "solution": "Complete step-by-step solution showing how to arrive at the answer"
+    "solution": "Step-by-step solution that teaches HOW and WHY. Name the common mistake that produces each distractor."
   }
 ]
 
-Generate exactly 5 problems. Each must have exactly 4 options. correctIndex is 0-based. difficulty must be "easy", "medium", or "hard".`;
+Exactly 5 problems, 4 options each, correctIndex 0-based.`;
 }
 
 export function translatePrompt(text: string, targetLang: string): string {

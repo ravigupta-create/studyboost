@@ -45,6 +45,7 @@ export default function LessonsPage() {
   const [mastered, setMastered] = useState(false);
 
   const resultRef = useRef<HTMLDivElement>(null);
+  const practiceRef = useRef<HTMLHeadingElement>(null);
 
   const selectedCourse = useMemo(() => COURSES.find(c => c.id === selectedCourseId) || COURSES[0], [selectedCourseId]);
 
@@ -121,6 +122,13 @@ export default function LessonsPage() {
   const checkAnswer = useCallback((idx: number, option: number) => {
     setCheckedProblems(prev => prev[idx] !== undefined ? prev : { ...prev, [idx]: option });
   }, []);
+
+  // Auto-scroll to practice section when lesson finishes streaming and problems are ready
+  useEffect(() => {
+    if (!lessonLoading && problems.length > 0 && Object.keys(checkedProblems).length === 0) {
+      setTimeout(() => practiceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    }
+  }, [lessonLoading, problems, checkedProblems]);
 
   // Silently evaluate mastery when all problems are checked
   useEffect(() => {
@@ -213,7 +221,7 @@ export default function LessonsPage() {
 
         {problems.length > 0 && (
           <>
-            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">Now you try</h3>
+            <h3 ref={practiceRef} className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">Now you try</h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
               Click an answer to check if you&apos;re right. If you get it wrong, you&apos;ll see how to solve it.
             </p>
@@ -265,12 +273,16 @@ export default function LessonsPage() {
                         ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                         : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
                       }`}>
-                        <p className={`text-sm font-semibold mb-2 ${isCorrect ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
-                          {isCorrect ? 'Correct!' : 'Not quite — here\'s how to solve it:'}
-                        </p>
-                        <div className={`text-sm ${isCorrect ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                          <MarkdownRenderer content={problem.solution} />
-                        </div>
+                        {isCorrect ? (
+                          <p className="text-sm font-semibold text-green-700 dark:text-green-300">Correct!</p>
+                        ) : (
+                          <>
+                            <p className="text-sm font-semibold mb-2 text-red-700 dark:text-red-300">Not quite — here&apos;s how to solve it:</p>
+                            <div className="text-sm text-red-600 dark:text-red-400">
+                              <MarkdownRenderer content={problem.solution} />
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </Card>
