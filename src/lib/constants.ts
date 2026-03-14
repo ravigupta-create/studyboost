@@ -2,15 +2,6 @@ import { Feature } from '@/types';
 
 export const FEATURES: Feature[] = [
   {
-    id: 'assessment',
-    name: 'Assessment Mode',
-    description: 'Diagnostic math assessment with personalized lessons for Integrated Math 1/2/3 Honors.',
-    href: '/assessment',
-    icon: '📊',
-    aiPowered: false,
-    color: 'from-blue-600 to-purple-600',
-  },
-  {
     id: 'homework',
     name: 'Homework Explainer',
     description: 'Paste any homework question and get a clear, step-by-step explanation.',
@@ -18,6 +9,15 @@ export const FEATURES: Feature[] = [
     icon: '📚',
     aiPowered: true,
     color: 'from-purple-500 to-indigo-500',
+  },
+  {
+    id: 'assessment',
+    name: 'Assessment Mode',
+    description: 'Diagnostic math assessment with personalized lessons for Integrated Math 1/2/3 Honors.',
+    href: '/assessment',
+    icon: '📊',
+    aiPowered: false,
+    color: 'from-blue-600 to-purple-600',
   },
   {
     id: 'quiz',

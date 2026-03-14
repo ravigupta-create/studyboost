@@ -9,8 +9,8 @@ import { cn } from '@/lib/cn';
 
 const AI_FEATURES = FEATURES.filter(f => f.aiPowered);
 const OFFLINE_FEATURES = FEATURES.filter(f => !f.aiPowered);
-const TOP_NAV = FEATURES.slice(0, 5);
-const MORE_FEATURES = FEATURES.slice(5);
+const TOP_NAV = FEATURES.slice(0, 6);
+const MORE_FEATURES = FEATURES.slice(6);
 
 export function Navbar() {
   const [open, setOpen] = useState(false);

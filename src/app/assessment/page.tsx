@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAssessment } from '@/hooks/useAssessment';
 import { useStudyStats } from '@/hooks/useStudyStats';
 import { useToast } from '@/hooks/useToast';
@@ -18,6 +19,7 @@ const IDK = -1; // sentinel for "I don't know this yet"
 type Phase = 'select' | 'quiz' | 'results' | 'finishing';
 
 export default function AssessmentPage() {
+  const router = useRouter();
   const { saveResult, getResults, savePausedAssessment, getPausedAssessment, clearPausedAssessment } = useAssessment();
   const { logSession } = useStudyStats();
   const { addToast } = useToast();
@@ -184,8 +186,9 @@ export default function AssessmentPage() {
     clearPausedAssessment();
     const duration = Math.round((Date.now() - startTime) / 1000);
     logSession('assessment', duration, overallPercentage);
-    setPhase('results');
-  }, [selectedCourse, unitScores, overallPercentage, questions, answers, saveResult, clearPausedAssessment, logSession, startTime]);
+    // Auto-navigate to lessons for topics the user needs to master
+    router.push(`/assessment/lessons?course=${selectedCourse.id}`);
+  }, [selectedCourse, unitScores, overallPercentage, questions, answers, saveResult, clearPausedAssessment, logSession, startTime, router]);
 
   // Handle delayed finish from "I don't know" on last question
   useEffect(() => {
